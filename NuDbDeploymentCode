@@ -1,0 +1,108 @@
+
+/* STEP 1
+INSTALL DOCKER
+*/
+
+/* STEP 2
+PULL A COPY OF THE NUODB CONTAINER IMAGE
+*/
+docker pull nuodb/nuodb-ce:latest
+
+/* STEP 3
+CREATE A DOCKER NETWORK
+*/
+
+docker network create nuodb-net
+
+/* STEP 4 
+START THE ADMIN SERVICE
+*/
+docker run -d --name nuoadmin1 --hostname nuoadmin1 --network nuodb-net --publish 8888:8888 --volume nuoadmin-raft-1:/var/opt/nuodb --env NUODB_DOMAIN_ENTRYPOINT=nuoadmin1 nuodb/nuodb-ce:latest nuoadmin
+
+docker run -d --name nuoadmin2 --hostname nuoadmin2 --network nuodb-net --publish 8889:8888 --volume nuoadmin-raft-2:/var/opt/nuodb --env NUODB_DOMAIN_ENTRYPOINT=nuoadmin1 nuodb/nuodb-ce:latest nuoadmin
+
+docker run -d --name nuoadmin3 --hostname nuoadmin3 --network nuodb-net --publish 8890:8888 --volume nuoadmin-raft-3:/var/opt/nuodb --env NUODB_DOMAIN_ENTRYPOINT=nuoadmin1 nuodb/nuodb-ce:latest nuoadmin
+   
+ /*
+ 
+ confirm your NuoDB Admin service(s) were created successfully
+ */
+ 
+ docker exec -it nuoadmin1 nuocmd show domain
+ 
+ /*
+ STEP 5
+ START THE DATABASE STORAGE MANAGER (SM)
+ user dba and password goalie.
+ */
+ 
+ docker run -d --name test-sm-1 --hostname test-sm-1 --network nuodb-net --volume test-arch-vol-1:/var/opt/nuodb nuodb/nuodb-ce:latest nuodocker --api-server nuoadmin1:8888 start sm --db-name test --server-id nuoadmin1 --dba-user dba --dba-password goalie
+				
+/*
+STEP 6
+START A DATABASE TRANSACTION ENGINE (TE)
+*/
+docker run -d --name test-te-1 --hostname test-te-1 --network nuodb-net nuodb/nuodb-ce:latest nuodocker --api-server nuoadmin1:8888 start te --db-name test --server-id nuoadmin1 --labels "te te1"
+
+docker run -d --name test-te-2 --hostname test-te-2 --network nuodb-net nuodb/nuodb-ce:latest nuodocker --api-server nuoadmin1:8888 start te --db-name test --server-id nuoadmin1 --labels "te te2"
+
+docker run -d --name test-te-3 --hostname test-te-3 --network nuodb-net nuodb/nuodb-ce:latest nuodocker --api-server nuoadmin1:8888 start te --db-name test --server-id nuoadmin1 --labels "te te3"
+				
+/*
+To confirm your NuoDB database has been created properly, type
+*/
+docker exec -it nuoadmin1 nuocmd show domain
+
+/*
+STEP 7
+RUNNING SQL
+*/
+docker exec -it nuoadmin1 bash
+
+/*
+sample hockey player and team database! You can run any SQL you’d like against the hockey schema
+*/
+nuosql test@nuoadmin1 --schema hockey --user dba --password goalie </opt/nuodb/samples/quickstart/sql/create-db.sql>& /dev/null
+nuosql test@nuoadmin1 --schema hockey --user dba --password goalie </opt/nuodb/samples/quickstart/sql/Players.sql>& /dev/null
+nuosql test@nuoadmin1 --schema hockey --user dba --password goalie </opt/nuodb/samples/quickstart/sql/Scoring.sql>& /dev/null
+nuosql test@nuoadmin1 --schema hockey --user dba --password goalie </opt/nuodb/samples/quickstart/sql/Teams.sql>& /dev/null
+
+
+nuosql test@nuoadmin1 --schema hockey --user dba --password goalie
+use hockey;
+show tables;
+
+
+select /* top 10 goal scorers in single season */
+  firstname, lastname, birthyear, s.year "YEAR PLAYED", t.name "TEAM", s.goals
+from scoring s, players p, teams t
+where s.playerid = p.playerid
+and   s.year     = t.year
+and   s.teamid   = t.teamid
+order by s.goals desc
+limit 10;
+
+/*
+STEP 8
+To shutdown , 
+Just issue the NuoDB shutdown database command, 
+remove the database SM and TE containers, 
+This command will remove the database containers.
+*/
+docker exec -it nuoadmin1 nuocmd shutdown database --db-name test
+docker rm -f test-sm-1 test-te-1 test-te-2 test-te-3
+
+
+/*
+database has been shutdown 
+and is now in a non-running state
+*/
+docker exec -it nuoadmin1 nuocmd show domain
+
+/*
+STEP 9 Delete database by running those commands.
+*/
+docker rm -f nuoadmin1 nuoadmin2 nuoadmin3
+docker rm -f test-sm-1 test-te-1 test-te-2 test-te-3
+docker volume rm -f nuoadmin-raft-1 nuoadmin-raft-2 nuoadmin-raft-3
+docker volume rm -f test-arch-vol-1
